@@ -1,0 +1,149 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-on-surface antialiased font-body-md text-body-md;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Focus ring: 2px sapphire, zero vertical displacement (DESIGN.md) */
+  :focus-visible {
+    outline: 2px solid theme("colors.secondary");
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background-color: theme("colors.secondary");
+    color: #fff;
+  }
+
+  /* Custom subtle scrollbar for the high-density workspace */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #f1f3ff;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #c5c6cd;
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #75777d;
+  }
+}
+
+@layer components {
+  .cl-hairline {
+    @apply border border-outline-variant;
+  }
+
+  /* Layer 1 — investigation cards & workspaces */
+  .cl-card {
+    @apply bg-surface-container-lowest border border-outline-variant rounded-xl shadow-layer1;
+  }
+
+  /* Layer 2 — contextual popovers & citation inspector */
+  .cl-popover {
+    @apply bg-surface-container-lowest rounded-xl shadow-layer2;
+    border: 1px solid #cbd5e1;
+  }
+
+  .cl-btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg
+           bg-primary text-white text-body-sm font-label-md shadow-sm
+           hover:bg-primary-container transition-colors
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .cl-btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg
+           bg-surface-container-lowest border border-outline-variant text-on-surface
+           text-body-sm font-label-md hover:bg-surface-container-low transition-colors
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .cl-btn-accent {
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg
+           bg-secondary text-white text-body-sm font-label-md
+           hover:bg-secondary-container transition-colors
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .cl-chip {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded font-statute-code text-statute-code
+           border border-outline-variant bg-surface-container-high text-on-surface;
+  }
+
+  .cl-rule {
+    @apply border-b border-outline-variant;
+  }
+
+  /*
+   * A link sitting inside a block of prose must be distinguishable without
+   * relying on colour (WCAG 1.4.1), so it carries a permanent underline.
+   * Standalone links — buttons, list rows, nav items — are distinguished by
+   * position and do not need one.
+   */
+  .cl-inline-link {
+    @apply text-secondary underline underline-offset-2 decoration-secondary/40
+           hover:decoration-secondary transition-colors;
+  }
+
+  /* Shimmer used by skeleton loading states */
+  .cl-skeleton {
+    @apply bg-surface-container-high rounded;
+    animation: cl-pulse 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+@keyframes cl-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Reduced motion: replace springs/transforms with quick opacity changes */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .cl-skeleton {
+    animation: none;
+  }
+}
+
+/* Print: reports must render as clean documents */
+@media print {
+  .cl-no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  .cl-card {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+}

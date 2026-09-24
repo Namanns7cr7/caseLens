@@ -1,0 +1,17 @@
+{
+  "description": "Replace placeholder entries with verified demo citations and authoritative expected outcomes before demo day.",
+  "cases": [
+    {
+      "id": "demo-verified-1",
+      "inputCitation": "PLACEHOLDER VERIFIED CITATION",
+      "expectedStatus": "VERIFIED",
+      "notes": "Insert a real citation from the curated corpus."
+    },
+    {
+      "id": "demo-mismatch-1",
+      "inputCitation": "PLACEHOLDER METADATA MISMATCH",
+      "expectedStatus": "METADATA_MISMATCH",
+      "notes": "Insert the curated known mismatch used in the hackathon demonstration."
+    }
+  ]
+}
