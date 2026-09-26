@@ -105,7 +105,8 @@ Copy `.env.example` to `.env.local`. Every value is optional for the demo.
 | Variable | Effect when unset |
 | --- | --- |
 | `DATABASE_URL` | Reads the seeded in-memory corpus. Set it to run against PostgreSQL + pgvector. |
-| `GEMINI_API_KEY` | Verification stays fully deterministic; research returns retrieved passages rather than a synthesis, and says so. |
+| `VERTEX_PROJECT` / `VERTEX_LOCATION` | Gemini via Vertex AI, authenticated by the runtime's own Google identity — no API key. This is what the deployed service uses. |
+| `GEMINI_API_KEY` | Alternative backend (Google AI Studio) for a local checkout. With neither set, verification stays fully deterministic and research returns retrieved passages rather than a synthesis, and says so. |
 | `OBJECT_STORAGE_*` | Uploads are stored on local disk under `storage/`. |
 
 Secrets are read only on the server. The model key never reaches the browser.

@@ -26,15 +26,78 @@ import type {
  *     the caller already retrieved.
  */
 
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
-const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
+const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const AI_STUDIO_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
+
+/**
+ * Two ways to reach Gemini, in preference order.
+ *
+ * VERTEX — used when VERTEX_PROJECT is set. Authenticates with the runtime's
+ * own Google identity (the Cloud Run service account, or local application
+ * default credentials), so there is no API key to provision, rotate or leak.
+ * This is the path the deployed service uses.
+ *
+ * AI_STUDIO — used when GEMINI_API_KEY is set instead. Kept because it is the
+ * zero-setup option for a local checkout.
+ *
+ * NONE — neither configured. Verification stays fully deterministic and the
+ * research page returns retrieved passages rather than a synthesis, and says
+ * so; nothing silently degrades.
+ */
+type Backend = "VERTEX" | "AI_STUDIO" | "NONE";
+
+const VERTEX_LOCATION = process.env.VERTEX_LOCATION ?? "asia-south1";
+
+export function backend(): Backend {
+  if (process.env.VERTEX_PROJECT) return "VERTEX";
+  if (process.env.GEMINI_API_KEY) return "AI_STUDIO";
+  return "NONE";
+}
 
 export function isModelConfigured(): boolean {
-  return Boolean(process.env.GEMINI_API_KEY);
+  return backend() !== "NONE";
 }
 
 export function modelVersion(): string {
-  return isModelConfigured() ? MODEL : "deterministic-fallback";
+  switch (backend()) {
+    case "VERTEX":
+      return `${MODEL} (Vertex AI, ${VERTEX_LOCATION})`;
+    case "AI_STUDIO":
+      return `${MODEL} (Gemini API)`;
+    default:
+      return "deterministic-fallback";
+  }
+}
+
+/**
+ * OAuth token for Vertex AI, via Application Default Credentials.
+ *
+ * `google-auth-library` resolves credentials the same way every Google
+ * client does: the Cloud Run metadata server in production, and a
+ * developer's gcloud login locally. An earlier version of this called the
+ * metadata endpoint by hand and failed silently inside the container, which
+ * is a good argument for not hand-rolling auth. The library also caches and
+ * refreshes the token, so callers can ask for one per request.
+ */
+let authClient: import("google-auth-library").GoogleAuth | undefined;
+
+async function vertexAccessToken(): Promise<string | undefined> {
+  try {
+    if (!authClient) {
+      const { GoogleAuth } = await import("google-auth-library");
+      authClient = new GoogleAuth({
+        scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+      });
+    }
+    const token = await authClient.getAccessToken();
+    return token ?? undefined;
+  } catch (error) {
+    console.error(
+      "Vertex AI token request failed:",
+      error instanceof Error ? error.message : "unknown error",
+    );
+    return undefined;
+  }
 }
 
 export const SYSTEM_PROMPT = `You are the reasoning layer inside CaseLens, an AI-assisted legal investigation tool.
@@ -58,21 +121,50 @@ interface GenerateOptions {
   timeoutMs?: number;
 }
 
-/** Calls Gemini and returns raw JSON text, or undefined if unavailable. */
+/** Endpoint and auth header for whichever backend is configured. */
+async function resolveTarget(): Promise<{ url: string; headers: Record<string, string> } | undefined> {
+  const mode = backend();
+
+  if (mode === "VERTEX") {
+    const project = process.env.VERTEX_PROJECT;
+    const token = await vertexAccessToken();
+    if (!project || !token) {
+      console.error("Vertex AI is configured but no access token could be obtained");
+      return undefined;
+    }
+    return {
+      url:
+        `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${project}` +
+        `/locations/${VERTEX_LOCATION}/publishers/google/models/${MODEL}:generateContent`,
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    };
+  }
+
+  if (mode === "AI_STUDIO") {
+    return {
+      url: `${AI_STUDIO_ENDPOINT}/${MODEL}:generateContent`,
+      headers: {
+        "content-type": "application/json",
+        "x-goog-api-key": process.env.GEMINI_API_KEY as string,
+      },
+    };
+  }
+
+  return undefined;
+}
+
+/** Calls Gemini and returns parsed JSON, or undefined if unavailable. */
 async function generateJson(options: GenerateOptions): Promise<unknown | undefined> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return undefined;
+  const target = await resolveTarget();
+  if (!target) return undefined;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 20000);
 
   try {
-    const response = await fetch(`${ENDPOINT}/${MODEL}:generateContent`, {
+    const response = await fetch(target.url, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
+      headers: target.headers,
       signal: controller.signal,
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: options.systemPrompt }] },
@@ -86,7 +178,7 @@ async function generateJson(options: GenerateOptions): Promise<unknown | undefin
     });
 
     if (!response.ok) {
-      // Never log the key or the full document body.
+      // Never log the credential or the document body.
       console.error(`Gemini request failed with status ${response.status}`);
       return undefined;
     }

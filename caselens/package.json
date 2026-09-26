@@ -22,6 +22,7 @@
     "d3-force": "^3.0.0",
     "drizzle-orm": "^0.36.4",
     "framer-motion": "^11.15.0",
+    "google-auth-library": "^11.1.0",
     "lucide-react": "^0.468.0",
     "next": "^15.5.25",
     "pdfjs-dist": "^4.8.69",

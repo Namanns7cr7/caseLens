@@ -6,7 +6,7 @@ const nextConfig = {
   // rewrites that path into .next/server/chunks, where the worker file is not
   // traced, and extraction fails in a production build. Loading the package
   // from node_modules keeps the resolution correct.
-  serverExternalPackages: ["pdfjs-dist"],
+  serverExternalPackages: ["pdfjs-dist", "google-auth-library"],
   outputFileTracingRoot: process.cwd(),
   experimental: {
     serverActions: { bodySizeLimit: "25mb" },
