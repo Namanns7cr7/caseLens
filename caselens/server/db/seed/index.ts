@@ -322,8 +322,10 @@ export function buildCorpus(): Corpus {
     });
   }
 
+  const seedCasesById = new Map(SEED_CASES.map((c) => [c.id, c]));
+
   const relationships: CaseRelationship[] = SEED_RELATIONSHIPS.map((rel, index) => {
-    const sourceCase = SEED_CASES.find((c) => c.id === rel.sourceCaseId);
+    const sourceCase = seedCasesById.get(rel.sourceCaseId);
     if (!sourceCase) {
       throw new Error(`Seed relationship references unknown case: ${rel.sourceCaseId}`);
     }
@@ -391,6 +393,48 @@ export function getCitationIndex(): Map<string, string> {
     for (const key of keys) index.set(normalizeCitation(key), summary.id);
   }
   citationIndex = index;
+  return index;
+}
+
+/**
+ * Normalized citation forms per case, for substring matching.
+ *
+ * `getCitationIndex` answers exact lookups only. Typeahead asks whether a
+ * partial citation occurs inside any indexed form, which cannot use that
+ * index — but it can reuse the normalization, instead of redoing it over the
+ * whole corpus on every keystroke.
+ */
+let citationForms: Map<string, string[]> | undefined;
+
+export function getCitationForms(): Map<string, string[]> {
+  if (citationForms) return citationForms;
+  const forms = new Map<string, string[]>();
+  for (const summary of getCorpus().cases.values()) {
+    forms.set(
+      summary.id,
+      [summary.neutralCitation, ...summary.reporterCitations]
+        .filter((value): value is string => Boolean(value))
+        .map((value) => normalizeCitation(value)),
+    );
+  }
+  citationForms = forms;
+  return forms;
+}
+
+/**
+ * Court lookup by display name: court name -> court id.
+ *
+ * `CaseSummary` carries the court's name rather than its id, while the search
+ * filters address courts by id. Without an index every candidate in a result
+ * set resolves its court by scanning the court table.
+ */
+let courtIdByName: Map<string, string> | undefined;
+
+export function getCourtIdByName(): Map<string, string> {
+  if (courtIdByName) return courtIdByName;
+  const index = new Map<string, string>();
+  for (const court of getCorpus().courts.values()) index.set(court.name, court.id);
+  courtIdByName = index;
   return index;
 }
 

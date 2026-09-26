@@ -94,6 +94,72 @@ export function citationCount(caseId: string): number {
 /* Relationships                                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Adjacency over the relationship table.
+ *
+ * Every relationship read — the graph, the timeline, subsequent treatment —
+ * asks which edges touch one case, and answering that by scanning the whole
+ * table makes rendering a graph of N cases cost N x E. The corpus is an
+ * immutable singleton, so the adjacency is derived once and reused.
+ *
+ * `touching` keeps edges in the order the table declares them, so callers
+ * see the same ordering a scan produced.
+ */
+interface RelationshipIndex {
+  /** Edges with this case at either end, in table order. */
+  touching: Map<string, CaseRelationship[]>;
+  /** Edges asserted by this case. */
+  outgoing: Map<string, CaseRelationship[]>;
+  /** Edges asserted against this case. */
+  incoming: Map<string, CaseRelationship[]>;
+  /** Cases construing a provision, in corpus order. */
+  byProvision: Map<string, CaseSummary[]>;
+}
+
+let indexedCorpus: ReturnType<typeof getCorpus> | undefined;
+let relationshipIndex: RelationshipIndex | undefined;
+
+function append<T>(map: Map<string, T[]>, key: string, value: T): void {
+  const existing = map.get(key);
+  if (existing) existing.push(value);
+  else map.set(key, [value]);
+}
+
+function getRelationshipIndex(): RelationshipIndex {
+  const corpus = getCorpus();
+  if (relationshipIndex && indexedCorpus === corpus) return relationshipIndex;
+
+  const index: RelationshipIndex = {
+    touching: new Map(),
+    outgoing: new Map(),
+    incoming: new Map(),
+    byProvision: new Map(),
+  };
+
+  for (const rel of corpus.relationships) {
+    append(index.touching, rel.sourceCaseId, rel);
+    // A self-referential edge touches its case once, not twice.
+    if (rel.targetCaseId !== rel.sourceCaseId) append(index.touching, rel.targetCaseId, rel);
+    append(index.outgoing, rel.sourceCaseId, rel);
+    append(index.incoming, rel.targetCaseId, rel);
+  }
+
+  for (const dossier of corpus.dossiers.values()) {
+    for (const link of dossier.provisions) {
+      const cases = index.byProvision.get(link.provision.id);
+      // A dossier may link the same provision from several paragraphs; it is
+      // still one case construing it. Repeats are adjacent, one dossier being
+      // indexed at a time.
+      if (!cases) index.byProvision.set(link.provision.id, [dossier.summary]);
+      else if (cases[cases.length - 1] !== dossier.summary) cases.push(dossier.summary);
+    }
+  }
+
+  indexedCorpus = corpus;
+  relationshipIndex = index;
+  return index;
+}
+
 /** The reciprocal of an asserting edge, for traversal in both directions. */
 const INVERSE: Record<RelationshipType, RelationshipType> = {
   CITES: "CITED_BY",
@@ -115,7 +181,7 @@ const INVERSE: Record<RelationshipType, RelationshipType> = {
  */
 export function relationshipsFor(caseId: string): CaseRelationship[] {
   const out: CaseRelationship[] = [];
-  for (const rel of getCorpus().relationships) {
+  for (const rel of getRelationshipIndex().touching.get(caseId) ?? []) {
     if (rel.sourceCaseId === caseId) {
       assertEvidenced(`relationship:${rel.id}`, rel.evidence);
       out.push(rel);
@@ -141,7 +207,7 @@ export function allRelationships(): CaseRelationship[] {
 /* Timeline                                                            */
 /* ------------------------------------------------------------------ */
 
-const PROCEDURAL: RelationshipType[] = ["APPEAL_OF", "AFFIRMS", "REVERSES", "REMANDS"];
+const PROCEDURAL = new Set<RelationshipType>(["APPEAL_OF", "AFFIRMS", "REVERSES", "REMANDS"]);
 
 /**
  * Builds the procedural chronology for a case: every forum that dealt with
@@ -150,26 +216,21 @@ const PROCEDURAL: RelationshipType[] = ["APPEAL_OF", "AFFIRMS", "REVERSES", "REM
  */
 export function buildTimeline(caseId: string): TimelineEvent[] {
   const corpus = getCorpus();
+  const index = getRelationshipIndex();
   const chain = new Set<string>([caseId]);
 
-  // Breadth-first walk over procedural edges in both directions.
+  // Breadth-first walk over procedural edges in both directions. The queue is
+  // read with a cursor rather than `shift`, which is O(n) per dequeue.
   const queue = [caseId];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current) break;
-    for (const rel of corpus.relationships) {
-      if (!PROCEDURAL.includes(rel.type)) continue;
-      const neighbours =
-        rel.sourceCaseId === current
-          ? [rel.targetCaseId]
-          : rel.targetCaseId === current
-            ? [rel.sourceCaseId]
-            : [];
-      for (const next of neighbours) {
-        if (!chain.has(next)) {
-          chain.add(next);
-          queue.push(next);
-        }
+  for (let head = 0; head < queue.length; head += 1) {
+    const current = queue[head];
+    if (!current) continue;
+    for (const rel of index.touching.get(current) ?? []) {
+      if (!PROCEDURAL.has(rel.type)) continue;
+      const next = rel.sourceCaseId === current ? rel.targetCaseId : rel.sourceCaseId;
+      if (!chain.has(next)) {
+        chain.add(next);
+        queue.push(next);
       }
     }
   }
@@ -179,8 +240,8 @@ export function buildTimeline(caseId: string): TimelineEvent[] {
     const summary = corpus.cases.get(id);
     if (!summary?.decisionDate) continue;
 
-    const inbound = corpus.relationships.filter(
-      (r) => r.sourceCaseId === id && PROCEDURAL.includes(r.type) && chain.has(r.targetCaseId),
+    const inbound = (index.outgoing.get(id) ?? []).filter(
+      (r) => PROCEDURAL.has(r.type) && chain.has(r.targetCaseId),
     );
     const kind = inbound.some((r) => r.type === "REVERSES")
       ? "REVERSAL"
@@ -210,8 +271,7 @@ export function buildTimeline(caseId: string): TimelineEvent[] {
 export function citingCases(caseId: string): Array<{ case: CaseSummary; relationship: CaseRelationship }> {
   const corpus = getCorpus();
   const out: Array<{ case: CaseSummary; relationship: CaseRelationship }> = [];
-  for (const rel of corpus.relationships) {
-    if (rel.targetCaseId !== caseId) continue;
+  for (const rel of getRelationshipIndex().incoming.get(caseId) ?? []) {
     const summary = corpus.cases.get(rel.sourceCaseId);
     if (summary) out.push({ case: summary, relationship: rel });
   }
@@ -222,12 +282,7 @@ export function citingCases(caseId: string): Array<{ case: CaseSummary; relation
 
 /** Cases sharing a provision with `caseId`. Powers "connected authorities". */
 export function casesCitingProvision(provisionId: string): CaseSummary[] {
-  const corpus = getCorpus();
-  const out: CaseSummary[] = [];
-  for (const dossier of corpus.dossiers.values()) {
-    if (dossier.provisions.some((p) => p.provision.id === provisionId)) {
-      out.push(dossier.summary);
-    }
-  }
-  return out.sort((a, b) => (b.decisionDate ?? "").localeCompare(a.decisionDate ?? ""));
+  return [...(getRelationshipIndex().byProvision.get(provisionId) ?? [])].sort((a, b) =>
+    (b.decisionDate ?? "").localeCompare(a.decisionDate ?? ""),
+  );
 }

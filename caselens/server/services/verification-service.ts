@@ -1,7 +1,8 @@
 import "server-only";
 
 import type { DetectedCitation } from "@/lib/legal/citation";
-import { extractYear, normalizeCitation, normalizeParagraphText } from "@/lib/legal/normalize";
+import { extractYear, normalizeCitation } from "@/lib/legal/normalize";
+import { analyze } from "@/lib/legal/text-analysis";
 import {
   idfWeight,
   longestCommonRunRatio,
@@ -461,11 +462,11 @@ function checkParagraph(citation: ExtractedCitation, match: CaseSummary): Paragr
 
   /* 3b. Quotation matching — exact first, then fuzzy. */
   if (citation.claimedQuotation) {
-    const normalizedQuote = normalizeParagraphText(citation.claimedQuotation);
+    const normalizedQuote = analyze(citation.claimedQuotation).normalized;
 
     let exact: JudgmentParagraph | undefined;
     for (const paragraph of paragraphs) {
-      if (normalizeParagraphText(paragraph.text).includes(normalizedQuote)) {
+      if (analyze(paragraph.text).normalized.includes(normalizedQuote)) {
         exact = paragraph;
         break;
       }
@@ -484,15 +485,22 @@ function checkParagraph(citation: ExtractedCitation, match: CaseSummary): Paragr
       );
     } else {
       // Fuzzy: highest token containment across paragraphs.
-      let best: { paragraph: JudgmentParagraph; containment: number; run: number } | undefined;
+      //
+      // Containment alone selects the paragraph; the run ratio only
+      // corroborates the winner. Computing it for every paragraph would run
+      // an O(quote x paragraph) alignment per paragraph to discard all but
+      // one result, so it is deferred until the winner is known.
+      let best: { paragraph: JudgmentParagraph; containment: number } | undefined;
       for (const paragraph of paragraphs) {
         const containment = tokenContainment(citation.claimedQuotation, paragraph.text);
-        const run = longestCommonRunRatio(citation.claimedQuotation, paragraph.text);
-        if (!best || containment > best.containment) best = { paragraph, containment, run };
+        if (!best || containment > best.containment) best = { paragraph, containment };
       }
+      const bestRun = best
+        ? longestCommonRunRatio(citation.claimedQuotation, best.paragraph.text)
+        : 0;
       bestContainment = best?.containment ?? 0;
 
-      if (best && best.containment >= THRESHOLDS.quotationVerbatim && best.run >= THRESHOLDS.runVerbatim) {
+      if (best && best.containment >= THRESHOLDS.quotationVerbatim && bestRun >= THRESHOLDS.runVerbatim) {
         matchedParagraph = best.paragraph;
         checks.push(
           check(

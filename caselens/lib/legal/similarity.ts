@@ -1,4 +1,4 @@
-import { normalizeCaseTitle, normalizeParagraphText, titleTokens } from "./normalize";
+import { analyze, titleProfileOf, trigramsOf } from "./text-analysis";
 
 /**
  * Deterministic similarity measures.
@@ -6,35 +6,39 @@ import { normalizeCaseTitle, normalizeParagraphText, titleTokens } from "./norma
  * DATA_PIPELINE.md orders paragraph verification as: exact match, then fuzzy
  * match, then paragraph-number lookup, and only then semantic support. These
  * functions cover the first two rungs and must never call a model.
+ *
+ * Tokenization is shared through `text-analysis.ts`, which caches it per
+ * distinct string. These measures are applied across the whole corpus for a
+ * single query, so re-normalizing the same text once per comparison costs
+ * more than the comparison itself.
  */
 
 /** Character trigrams of a normalized string, mirroring pg_trgm behaviour. */
 export function trigrams(input: string): Set<string> {
-  const padded = `  ${input} `;
-  const out = new Set<string>();
-  for (let i = 0; i < padded.length - 2; i += 1) {
-    out.add(padded.slice(i, i + 3));
-  }
-  return out;
+  return trigramsOf(input);
 }
 
-export function jaccard<T>(a: Set<T>, b: Set<T>): number {
+export function jaccard<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): number {
   if (a.size === 0 && b.size === 0) return 1;
+  // Iterate the smaller set: membership is O(1) on either side, so the loop
+  // length is the only thing that varies.
+  const small = a.size <= b.size ? a : b;
+  const large = small === a ? b : a;
   let intersection = 0;
-  for (const value of a) if (b.has(value)) intersection += 1;
+  for (const value of small) if (large.has(value)) intersection += 1;
   const union = a.size + b.size - intersection;
   return union === 0 ? 0 : intersection / union;
 }
 
 /** Trigram similarity in [0,1] over normalized case titles. */
 export function titleSimilarity(a: string, b: string): number {
-  const na = normalizeCaseTitle(a);
-  const nb = normalizeCaseTitle(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 1;
-  const trigramScore = jaccard(trigrams(na), trigrams(nb));
+  const pa = titleProfileOf(a);
+  const pb = titleProfileOf(b);
+  if (!pa.normalized || !pb.normalized) return 0;
+  if (pa.normalized === pb.normalized) return 1;
+  const trigramScore = jaccard(pa.trigrams, pb.trigrams);
   // Party-name overlap rescues titles whose word order or noise words differ.
-  const tokenScore = jaccard(new Set(titleTokens(a)), new Set(titleTokens(b)));
+  const tokenScore = jaccard(pa.tokens, pb.tokens);
   return Math.max(trigramScore, (trigramScore + tokenScore) / 2);
 }
 
@@ -78,9 +82,9 @@ export function levenshteinRatio(a: string, b: string): number {
  * paragraph", because a quotation is typically a fragment of the paragraph.
  */
 export function tokenContainment(needle: string, haystack: string): number {
-  const needleTokens = normalizeParagraphText(needle).split(" ").filter(Boolean);
+  const needleTokens = analyze(needle).tokens;
   if (needleTokens.length === 0) return 0;
-  const haystackTokens = new Set(normalizeParagraphText(haystack).split(" ").filter(Boolean));
+  const haystackTokens = analyze(haystack).tokenSet;
   let present = 0;
   for (const token of needleTokens) if (haystackTokens.has(token)) present += 1;
   return present / needleTokens.length;
@@ -92,8 +96,8 @@ export function tokenContainment(needle: string, haystack: string): number {
  * than coincidental shared vocabulary.
  */
 export function longestCommonRunRatio(a: string, b: string): number {
-  const ta = normalizeParagraphText(a).split(" ").filter(Boolean);
-  const tb = normalizeParagraphText(b).split(" ").filter(Boolean);
+  const ta = analyze(a).tokens;
+  const tb = analyze(b).tokens;
   if (ta.length === 0 || tb.length === 0) return 0;
 
   let best = 0;
@@ -101,10 +105,12 @@ export function longestCommonRunRatio(a: string, b: string): number {
   let current = new Array<number>(tb.length + 1).fill(0);
 
   for (let i = 1; i <= ta.length; i += 1) {
+    const left = ta[i - 1];
     for (let j = 1; j <= tb.length; j += 1) {
-      if (ta[i - 1] === tb[j - 1]) {
-        current[j] = (previous[j - 1] ?? 0) + 1;
-        if ((current[j] ?? 0) > best) best = current[j] ?? 0;
+      if (left === tb[j - 1]) {
+        const run = (previous[j - 1] ?? 0) + 1;
+        current[j] = run;
+        if (run > best) best = run;
       } else {
         current[j] = 0;
       }
@@ -115,14 +121,6 @@ export function longestCommonRunRatio(a: string, b: string): number {
     current.fill(0);
   }
   return best / Math.min(ta.length, tb.length);
-}
-
-function termCounts(text: string): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const token of normalizeParagraphText(text).split(" ").filter(Boolean)) {
-    map.set(token, (map.get(token) ?? 0) + 1);
-  }
-  return map;
 }
 
 /**
@@ -151,16 +149,19 @@ export function weightedCosine(
   b: string,
   weightOf: (term: string) => number,
 ): number {
-  const ca = termCounts(a);
-  const cb = termCounts(b);
+  const ca = analyze(a).counts;
+  const cb = analyze(b).counts;
   let dot = 0;
   let normA = 0;
   let normB = 0;
   for (const [token, count] of ca) {
-    const weighted = count * weightOf(token);
+    // One weight lookup per term. This runs once per corpus paragraph per
+    // comparison, so the duplicate lookup is worth eliding.
+    const weight = weightOf(token);
+    const weighted = count * weight;
     normA += weighted * weighted;
     const other = cb.get(token);
-    if (other) dot += weighted * other * weightOf(token);
+    if (other) dot += weighted * other * weight;
   }
   for (const [token, count] of cb) {
     const weighted = count * weightOf(token);
@@ -185,8 +186,8 @@ export function weightedContainment(
   haystack: string,
   weightOf: (term: string) => number,
 ): number {
-  const needleTerms = termCounts(needle);
-  const haystackTerms = new Set(normalizeParagraphText(haystack).split(" ").filter(Boolean));
+  const needleTerms = analyze(needle).counts;
+  const haystackTerms = analyze(haystack).tokenSet;
   let total = 0;
   let present = 0;
   for (const [token, count] of needleTerms) {
@@ -201,7 +202,7 @@ export function weightedContainment(
 export function buildIdf(documents: string[]): Map<string, number> {
   const df = new Map<string, number>();
   for (const document of documents) {
-    for (const token of new Set(normalizeParagraphText(document).split(" ").filter(Boolean))) {
+    for (const token of analyze(document).tokenSet) {
       df.set(token, (df.get(token) ?? 0) + 1);
     }
   }
