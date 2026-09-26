@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 /**
@@ -20,7 +21,23 @@ export interface ObjectStorage {
   delete(key: string): Promise<void>;
 }
 
-const STORAGE_ROOT = resolve(process.cwd(), "storage");
+/**
+ * Where uploads land.
+ *
+ * Locally this is `./storage`. Most hosts mount the application directory
+ * read-only, so `STORAGE_DIR` overrides it and the OS temp directory is the
+ * fallback — writable essentially everywhere, and appropriate for files that
+ * only need to outlive the request that uploaded them.
+ */
+function resolveStorageRoot(): string {
+  if (process.env.STORAGE_DIR) return resolve(process.env.STORAGE_DIR);
+  if (process.env.VERCEL || process.env.RENDER || process.env.NODE_ENV === "production") {
+    return resolve(tmpdir(), "caselens-storage");
+  }
+  return resolve(process.cwd(), "storage");
+}
+
+const STORAGE_ROOT = resolveStorageRoot();
 
 /** Rejects any key that could traverse outside the storage root. */
 function safePath(key: string): string {

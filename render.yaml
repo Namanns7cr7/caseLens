@@ -1,0 +1,28 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# A single long-lived Node process, which is what this build requires: the
+# investigation board and uploaded documents are held in memory, so the
+# request that uploads a document and the request that analyses it must
+# reach the same process. Serverless platforms do not guarantee that, which
+# is why this is a web service rather than a set of functions.
+services:
+  - type: web
+    name: caselens
+    runtime: node
+    plan: free
+    # The application lives in a subdirectory of this repository.
+    rootDir: caselens
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # The application directory is read-only on Render; uploads go to /tmp.
+      - key: STORAGE_DIR
+        value: /tmp/caselens-storage
+      # Optional. Without it, verification stays fully deterministic and the
+      # research page returns retrieved passages instead of a synthesis.
+      - key: GEMINI_API_KEY
+        sync: false

@@ -91,6 +91,9 @@ test.describe("golden demo path", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: /written-submissions-personal-guarantor/ }),
     ).toBeVisible();
+    // Scoped to the page body: the nav rail's "Unverified corpus" warning
+    // would otherwise satisfy a substring match for "Verified".
+    const findings = page.getByRole("main");
     for (const status of [
       "Verified",
       "Metadata mismatch",
@@ -98,7 +101,7 @@ test.describe("golden demo path", () => {
       "Weak proposition support",
       "No authoritative match",
     ]) {
-      await expect(page.getByText(status, { exact: false }).first()).toBeVisible();
+      await expect(onScreen(findings.getByText(status, { exact: false }))).toBeVisible();
     }
 
     /* ---- 7. Inspect the evidence for the flagged citation ---------- */
@@ -168,15 +171,19 @@ test.describe("legal integrity report", () => {
 test.describe("source transparency", () => {
   test("states plainly that nothing was retrieved", async ({ page }) => {
     await page.goto("/sources");
+    // Scoped to the page body: the nav rail carries a shorter version of the
+    // same warning and is hidden at mobile widths.
+    const main = page.getByRole("main");
+
     await expect(
-      page.getByRole("heading", { name: /Nothing in this index was retrieved from a source/ }),
+      main.getByRole("heading", { name: /Nothing in this index was retrieved from a source/ }),
     ).toBeVisible();
-    await expect(page.getByText(/written[\s\S]*from model recollection/).first()).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Authority levels" })).toBeVisible();
+    await expect(main.getByText(/written[\s\S]*from model recollection/).first()).toBeVisible();
+    await expect(main.getByRole("heading", { name: "Authority levels" })).toBeVisible();
 
     // Neither PRIMARY nor SECONDARY may be claimed anywhere in this build.
-    await expect(page.getByText("Primary source").first()).toBeVisible();
-    await expect(page.getByText(/Nothing in this build carries this level/).first()).toBeVisible();
+    await expect(main.getByText("Primary source").first()).toBeVisible();
+    await expect(main.getByText(/Nothing in this build carries this level/).first()).toBeVisible();
   });
 
   test("no record claims a retrieval date it does not have", async ({ page }) => {

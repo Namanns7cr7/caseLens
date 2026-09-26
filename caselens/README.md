@@ -60,7 +60,7 @@ server/
                       reports, research, provenance, storage, pdf extraction
   ai/                 Gemini access, strictly bounded
 lib/legal/            normalization, similarity, citation detection
-tests/unit/           88 tests — normalization, verification, domain rules,
+tests/unit/           89 tests — normalization, verification, domain rules,
                       the benchmark gate, the PDF pipeline
 tests/e2e/            golden path + WCAG A/AA audit, desktop and mobile
 ```
