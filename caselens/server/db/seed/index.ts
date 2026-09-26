@@ -16,6 +16,7 @@ import type {
   ProvenanceRef,
   Statute,
 } from "@/types/domain";
+import { LANDMARK_NOTE, LANDMARK_SOURCE_URL, SEED_LANDMARKS } from "./landmarks";
 import {
   DEMO_TEXT_NOTE,
   METADATA_NOTE,
@@ -275,6 +276,49 @@ export function buildCorpus(): Corpus {
       judgment,
       citationCount: seed.citationCount,
       issues: seed.issues,
+    });
+  }
+
+  /* Coverage index — metadata-only landmark authorities. These resolve a
+   * citation and nothing more: no judgment text, no relationships, and no
+   * metadata mismatch raised against them (see `landmarks.ts`). */
+  for (const landmark of SEED_LANDMARKS) {
+    const court = courts.get(landmark.courtId ?? "sci");
+    if (!court) continue;
+
+    const summary: CaseSummary = {
+      id: landmark.id,
+      title: landmark.title,
+      ...(landmark.reporterCitations[0] ? { citation: landmark.reporterCitations[0] } : {}),
+      court: court.name,
+      courtShortName: court.shortName,
+      courtLevel: court.level,
+      decisionDate: landmark.decisionDate,
+      summary: landmark.subject,
+      reporterCitations: landmark.reporterCitations,
+      benchStrength: landmark.benchStrength,
+      doctrinalStatus: "BINDING_LANDMARK",
+      coverageOnly: true,
+      provenance: [
+        {
+          sourceName: court.name,
+          sourceUrl: LANDMARK_SOURCE_URL,
+          authorityLevel: "DEMO",
+          note: LANDMARK_NOTE,
+        },
+      ],
+    };
+
+    cases.set(landmark.id, summary);
+    citationCounts.set(landmark.id, 0);
+    dossiers.set(landmark.id, {
+      summary,
+      parties: [],
+      judges: [],
+      provisions: [],
+      keyParagraphs: [],
+      citationCount: 0,
+      issues: [],
     });
   }
 

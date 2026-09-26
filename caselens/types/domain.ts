@@ -142,6 +142,13 @@ export interface CaseSummary {
   caseNumber?: string;
   benchStrength?: number;
   doctrinalStatus: DoctrinalStatus;
+  /**
+   * True for a record in the coverage index: known by citation and metadata
+   * only, with no indexed judgment text and no independently verified
+   * metadata. The verification engine reports these as known-but-uncheckable
+   * rather than raising a mismatch against them.
+   */
+  coverageOnly?: boolean;
   provenance: ProvenanceRef[];
 }
 

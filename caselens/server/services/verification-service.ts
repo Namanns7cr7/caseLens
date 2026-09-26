@@ -653,8 +653,18 @@ export function resolveStatus(input: {
   propositionSupported: boolean;
   propositionWeak: boolean;
   hasParagraphText: boolean;
+  /** Matched a coverage-index record: known by citation, nothing verified. */
+  coverageOnly?: boolean;
 }): VerificationStatus {
   if (!input.resolved) return "NO_AUTHORITATIVE_MATCH";
+
+  /* A coverage-index record establishes only that the authority is known.
+   * Its own metadata is unverified, so a disagreement is as likely to be our
+   * error as the document's — reporting a mismatch would be accusing a
+   * possibly-correct citation on the strength of a possibly-wrong record.
+   * The honest outcome is that a person has to look. */
+  if (input.coverageOnly) return "NEEDS_REVIEW";
+
   if (input.method === "FUZZY_TITLE" || input.metadataMismatches.length > 0) {
     return "METADATA_MISMATCH";
   }
@@ -713,6 +723,9 @@ function explain(
     }
     case "NEEDS_REVIEW":
     default:
+      if (match?.coverageOnly) {
+        return `${match.title} is a known authority in the connected sources, and the citation ${cited} resolves to it. Its judgment text is not indexed, so the quoted passage and the proposition drawn from it could not be checked, and its metadata has not been independently verified — no mismatch is reported on the strength of an unverified record. Confirm the citation and the passage against the primary record.`;
+      }
       return `The citation ${cited} could be resolved, but the automated checks did not produce a confident result. Human review is required.`;
   }
 }
@@ -762,28 +775,56 @@ export function verifyCitation(
     comparisons = metadata.comparisons;
     metadataMismatches = metadata.mismatches;
 
-    const paragraphOutcome = checkParagraph(citation, match);
-    checks.push(...paragraphOutcome.checks);
-    matchedParagraph = paragraphOutcome.matchedParagraph;
-    quotationMismatch = paragraphOutcome.quotationMismatch;
-    paragraphNumberMissing = paragraphOutcome.paragraphNumberMissing;
     hasParagraphText = listParagraphs(match.id).length > 0;
 
-    if (matchedParagraph) evidence.push(...matchedParagraph.provenance);
-
-    const proposition = checkProposition(citation, match);
-    propositionSimilarity = proposition.similarity;
-    propositionSupported = proposition.supported;
-    propositionWeak = proposition.weak;
-
-    // The model may refine the proposition step only — never the steps above.
-    if (options.aiOverride) {
-      checks.push(proposition.check);
-      checks.push(options.aiOverride.check);
-      propositionSupported = options.aiOverride.supported;
-      propositionWeak = options.aiOverride.weak;
+    if (match.coverageOnly) {
+      /* Nothing to check the words against. Running the paragraph and
+       * proposition steps here would report FAIL for checks that were never
+       * possible, which reads as a finding against the citation rather than
+       * a limit of the index. They are recorded as skipped, with the reason. */
+      checks.push(
+        check(
+          "paragraph-number",
+          "Paragraph number lookup",
+          "SKIPPED",
+          `The judgment text of ${match.title} is not indexed, so no paragraph could be looked up.`,
+        ),
+        check(
+          "quotation-exact",
+          "Quotation match",
+          "SKIPPED",
+          "No indexed passage exists for this authority, so a quotation cannot be checked against it.",
+        ),
+        check(
+          "proposition-support",
+          "Proposition support",
+          "SKIPPED",
+          "Proposition support is measured against the authority's own paragraphs, which are not indexed for this record.",
+        ),
+      );
     } else {
-      checks.push(proposition.check);
+      const paragraphOutcome = checkParagraph(citation, match);
+      checks.push(...paragraphOutcome.checks);
+      matchedParagraph = paragraphOutcome.matchedParagraph;
+      quotationMismatch = paragraphOutcome.quotationMismatch;
+      paragraphNumberMissing = paragraphOutcome.paragraphNumberMissing;
+
+      if (matchedParagraph) evidence.push(...matchedParagraph.provenance);
+
+      const proposition = checkProposition(citation, match);
+      propositionSimilarity = proposition.similarity;
+      propositionSupported = proposition.supported;
+      propositionWeak = proposition.weak;
+
+      // The model may refine the proposition step only — never the steps above.
+      if (options.aiOverride) {
+        checks.push(proposition.check);
+        checks.push(options.aiOverride.check);
+        propositionSupported = options.aiOverride.supported;
+        propositionWeak = options.aiOverride.weak;
+      } else {
+        checks.push(proposition.check);
+      }
     }
   } else {
     comparisons = [
@@ -825,6 +866,7 @@ export function verifyCitation(
     propositionSupported,
     propositionWeak,
     hasParagraphText,
+    ...(match?.coverageOnly ? { coverageOnly: true } : {}),
   });
 
   return {
